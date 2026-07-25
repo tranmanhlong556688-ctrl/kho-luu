@@ -1,0 +1,83 @@
+name: Build Minh Office Reader APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/minh-office-reader
+    paths:
+      - 'build_sources/minh-office-reader/**'
+      - '.github/workflows/minh-office-reader.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'build_sources/minh-office-reader/**'
+      - '.github/workflows/minh-office-reader.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools"
+
+      - name: Restore project source
+        run: |
+          mkdir -p work
+          cat build_sources/minh-office-reader/part-*.b64 | base64 --decode > work/source.zip
+          unzip -q work/source.zip -d work
+          test -f work/MinhOfficeReader/settings.gradle.kts
+
+      - name: Generate official Gradle Wrapper
+        working-directory: work/MinhOfficeReader
+        run: gradle wrapper --gradle-version 8.13 --gradle-distribution-sha256-sum 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+
+      - name: Run unit tests and lint
+        working-directory: work/MinhOfficeReader
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+
+      - name: Build installable APKs
+        working-directory: work/MinhOfficeReader
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+
+      - name: Prepare downloadable files
+        run: |
+          mkdir -p dist
+          cp work/MinhOfficeReader/app/build/outputs/apk/debug/app-debug.apk dist/MinhOfficeReader-v1.0.0-universal-debug.apk
+          cp work/MinhOfficeReader/app/build/outputs/apk/release/app-release.apk dist/MinhOfficeReader-v1.0.0-universal-release.apk
+          cp work/source.zip dist/MinhOfficeReader-v1.0.0-source.zip
+          cd dist
+          sha256sum *.apk *.zip > SHA256SUMS.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinhOfficeReader-v1.0.0-APK
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
